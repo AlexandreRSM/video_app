@@ -3,27 +3,30 @@ import 'package:ffmpeg_kit_flutter/ffmpeg_kit.dart';
 import 'dart:developer' as developer;
 import 'dart:io';
 
-class EditVideoPage {
-  static Future<bool> convertVideoToFrame(String filePath) async {
-    bool success = false;
+class FFmpegWorks {
+  static Future<void> convertVideoToFrames(String videoPath) async {
+    try {
+      // Identifique a pasta onde o vídeo está armazenado
+      Directory projectDir = Directory(videoPath).parent;
 
-    var tokens = filePath.split('/');
-    var path = tokens.getRange(0, tokens.length - 1).join('/');
-    var fileName = tokens[tokens.length - 1].split('.')[0];
-    String dir = '$path/$fileName';
+      // Gere o caminho dos frames na mesma pasta do vídeo
+      String framesPattern = '${projectDir.path}/frame_%04d.jpg';
 
-    await Directory(dir).create(recursive: true);
+      // Comando FFmpeg para converter o vídeo em frames
+      String command = '-i $videoPath $framesPattern';
 
-    var session = await FFmpegKit.execute('-i $filePath $dir/frame%d.jpg');
-    var logs = await session.getAllLogsAsString();
-    developer.log('----> $logs');
-    final returnCode = await session.getReturnCode();
+      await FFmpegKit.execute(command).then((session) async {
+        final returnCode = await session.getReturnCode();
+        if (ReturnCode.isSuccess(returnCode)) {
+          developer.log('Frames saved successfully in ${projectDir.path}', name: 'FFmpegWorks');
+        } else {
+          developer.log('Failed to save frames', name: 'FFmpegWorks');
+        }
+      });
 
-    if (ReturnCode.isSuccess(returnCode)) {
-      success = true;
+    } catch (e) {
+      developer.log('Error converting video to frames: $e', name: 'FFmpegWorks');
     }
-
-    return success;
   }
 
   static Future<bool> convertFrameToVideo(String dirPath, String outputPath) async {

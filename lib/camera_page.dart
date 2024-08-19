@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
+import 'package:flutter_video_app/video_page.dart';
 import 'package:logger/logger.dart';
 import 'dart:developer' as developer;
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
-import 'package:flutter_video_app/project_gallery_page.dart'; // Importar a nova página da galeria de projetos
+import 'package:flutter_video_app/project_gallery_page.dart';
+
 
 class CameraPage extends StatefulWidget {
   final Function(ThemeMode) onThemeChanged;
@@ -18,15 +20,14 @@ class CameraPage extends StatefulWidget {
 class _CameraPageState extends State<CameraPage> {
   final log = Logger();
   bool _isLoading = true;
-  late CameraController _cameraController;
+  CameraController? _cameraController;
   List<CameraDescription> _cameras = [];
   bool _isRecording = false;
   double _zoomLevel = 1.0;
   double _minZoomLevel = 1.0;
   double _maxZoomLevel = 1.0;
-  final double _exposureOffset = 0.0;
-  double _minExposureOffset = 0.0;
-  double _maxExposureOffset = 0.0;
+  bool _isSlowMotion = false;
+  Directory? _currentProjectDir;
 
   @override
   void initState() {
@@ -36,59 +37,107 @@ class _CameraPageState extends State<CameraPage> {
 
   @override
   void dispose() {
-    _cameraController.dispose();
+    _cameraController?.dispose();
     super.dispose();
   }
 
-  Future<void> _initCamera() async {
+  Future<void> _initCamera({bool slowMotion = false}) async {
     try {
+      if (_cameraController != null) {
+        await _cameraController?.dispose();
+      }
+
       _cameras = await availableCameras();
       final backCamera = _cameras.firstWhere(
             (camera) => camera.lensDirection == CameraLensDirection.back,
       );
+
       _cameraController = CameraController(
         backCamera,
-        ResolutionPreset.max,
+        slowMotion ? ResolutionPreset.high : ResolutionPreset.max,
         enableAudio: true,
       );
 
-      await _cameraController.initialize();
+      await _cameraController?.initialize();
 
-      // Obter os níveis de zoom e exposição
-      _minZoomLevel = await _cameraController.getMinZoomLevel();
-      _maxZoomLevel = await _cameraController.getMaxZoomLevel();
-      _minExposureOffset = await _cameraController.getMinExposureOffset();
-      _maxExposureOffset = await _cameraController.getMaxExposureOffset();
+      _minZoomLevel = await _cameraController!.getMinZoomLevel();
+      _maxZoomLevel = await _cameraController!.getMaxZoomLevel();
 
-
-
-      setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     } catch (e) {
       log.e("Error initializing camera: $e");
       developer.log('Error initializing camera: $e', name: 'CameraPage');
-      setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _switchCamera() async {
+    if (_cameras.isEmpty || _cameraController == null) {
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      await _cameraController?.dispose();
+
+      CameraDescription newCamera = _cameraController!.description.lensDirection == CameraLensDirection.back
+          ? _cameras.firstWhere((camera) => camera.lensDirection == CameraLensDirection.front)
+          : _cameras.firstWhere((camera) => camera.lensDirection == CameraLensDirection.back);
+
+      _cameraController = CameraController(newCamera, ResolutionPreset.max, enableAudio: true);
+
+      await _cameraController!.initialize();
+
+      _minZoomLevel = await _cameraController!.getMinZoomLevel();
+      _maxZoomLevel = await _cameraController!.getMaxZoomLevel();
+
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    } catch (e) {
+      developer.log('Error switching camera: $e', name: 'CameraPage');
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error switching camera: $e')),
+        );
+      }
     }
   }
 
   Future<void> _captureVideo() async {
     try {
-      Directory appDocDir = await getApplicationDocumentsDirectory();
-      String projectDirName = DateTime.now().millisecondsSinceEpoch.toString();
-      Directory projectDir = Directory('${appDocDir.path}/$projectDirName');
-      await projectDir.create(recursive: true);
-
-      if (_isRecording) {
-        XFile videoFile = await _cameraController.stopVideoRecording();
+      if (_isRecording && _cameraController != null) {
+        XFile videoFile = await _cameraController!.stopVideoRecording();
         setState(() => _isRecording = false);
 
-        File newVideo = await File(videoFile.path).copy('${projectDir.path}/video.mp4');
+        if (_currentProjectDir != null) {
+          File newVideo = await File(videoFile.path).copy('${_currentProjectDir!.path}/video.mp4');
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Video recorded successfully!')),
-        );
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Video recorded successfully at ${newVideo.path}!')),
+          );
 
-      } else {
-        await _cameraController.startVideoRecording();
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => VideoPlayerPage(videoPath: newVideo.path),
+            ),
+          );
+        }
+      } else if (_cameraController != null) {
+        Directory appDocDir = await getApplicationDocumentsDirectory();
+        String projectDirName = DateTime.now().millisecondsSinceEpoch.toString();
+        _currentProjectDir = Directory('${appDocDir.path}/$projectDirName');
+
+        await _currentProjectDir!.create(recursive: true);
+
+        await _cameraController!.startVideoRecording();
         setState(() => _isRecording = true);
 
         ScaffoldMessenger.of(context).showSnackBar(
@@ -103,13 +152,19 @@ class _CameraPageState extends State<CameraPage> {
     }
   }
 
-  // Navegar para a galeria de projetos
+  void _toggleSlowMotion() {
+    setState(() {
+      _isSlowMotion = !_isSlowMotion;
+      _initCamera(slowMotion: _isSlowMotion);
+    });
+  }
+
   void _openGallery() async {
     Directory appDocDir = await getApplicationDocumentsDirectory();
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => ProjectGalleryPage(baseDir: appDocDir), // Passar o diretório base para a galeria
+        builder: (_) => ProjectGalleryPage(baseDir: appDocDir),
       ),
     );
   }
@@ -132,9 +187,13 @@ class _CameraPageState extends State<CameraPage> {
           toolbarHeight: 60.0,
           actions: [
             IconButton(
-              icon: Icon(_isRecording ? Icons.stop : Icons.videocam),
-              tooltip: 'Record Video',
-              onPressed: _captureVideo,
+              icon: Icon(_isSlowMotion ? Icons.slow_motion_video : Icons.slow_motion_video_rounded),
+              onPressed: _toggleSlowMotion,
+            ),
+            IconButton(
+              icon: const Icon(Icons.switch_camera),
+              tooltip: 'Switch Camera',
+              onPressed: _switchCamera,
             ),
             IconButton(
               icon: const Icon(Icons.video_library),
@@ -166,30 +225,38 @@ class _CameraPageState extends State<CameraPage> {
         body: Stack(
           children: [
             Positioned.fill(
-              child: CameraPreview(_cameraController),
+              child: _cameraController != null && _cameraController!.value.isInitialized
+                  ? CameraPreview(_cameraController!)
+                  : const Center(child: CircularProgressIndicator()),
             ),
             Positioned(
-              bottom: 160,
+              bottom: 40,
               left: 0,
               right: 0,
-              child: Center(
-                child: FloatingActionButton(
-                  backgroundColor: Colors.blue,
-                  onPressed: _captureVideo,
-                  child: Icon(_isRecording ? Icons.stop : Icons.circle),
-                ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  FloatingActionButton(
+                    backgroundColor: Colors.blue,
+                    onPressed: _captureVideo,
+                    child: Icon(_isRecording ? Icons.stop : Icons.circle),
+                  ),
+                  const SizedBox(height: 16),
+                  Slider(
+                    value: _zoomLevel,
+                    min: _minZoomLevel,
+                    max: _maxZoomLevel,
+                    onChanged: _cameraController != null
+                        ? (value) {
+                      setState(() {
+                        _zoomLevel = value;
+                        _cameraController!.setZoomLevel(value);
+                      });
+                    }
+                        : null,
+                  ),
+                ],
               ),
-            ),
-            Slider(
-              value: _zoomLevel,
-              min: _minZoomLevel,
-              max: _maxZoomLevel,
-              onChanged: (value) {
-                setState(() {
-                  _zoomLevel = value;
-                  _cameraController.setZoomLevel(value);
-                });
-              },
             ),
           ],
         ),

@@ -1,146 +1,96 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
-import 'package:flutter_video_app/ffmpeg_works.dart';
-import 'package:flutter_video_app/frames_gallery_page.dart';
+import 'dart:io';
+import 'dart:developer' as developer;
 
-class VideoPage extends StatefulWidget {
-  final String filePath;
+class VideoPlayerPage extends StatefulWidget {
+  final String videoPath;
 
-  const VideoPage({super.key, required this.filePath});
+  const VideoPlayerPage({Key? key, required this.videoPath}) : super(key: key);
 
   @override
-  _VideoPageState createState() => _VideoPageState();
+  _VideoPlayerPageState createState() => _VideoPlayerPageState();
 }
 
-class _VideoPageState extends State<VideoPage> {
-  late VideoPlayerController _videoPlayerController;
-  bool _isProcessing = false;
-
-  get framesDirPath => null;
+class _VideoPlayerPageState extends State<VideoPlayerPage> {
+  VideoPlayerController? _controller;
+  bool _isLoading = true;
+  bool _hasError = false;
 
   @override
   void initState() {
     super.initState();
-    _initVideoPlayer();
+    _initializeVideoPlayer();
+  }
+
+  Future<void> _initializeVideoPlayer() async {
+    try {
+      // Verifica se o arquivo de vídeo existe
+      if (await File(widget.videoPath).exists()) {
+        _controller = VideoPlayerController.file(File(widget.videoPath));
+
+        await _controller!.initialize().then((_) {
+          if (mounted) {
+            setState(() {
+              _isLoading = false;
+            });
+          }
+          _controller!.play(); // Inicia a reprodução do vídeo automaticamente
+        });
+      } else {
+        developer.log('Video file does not exist at path: ${widget.videoPath}', name: 'VideoPlayerPage');
+        setState(() {
+          _isLoading = false;
+          _hasError = true;
+        });
+      }
+    } catch (e) {
+      developer.log('Error initializing video player: $e', name: 'VideoPlayerPage');
+      setState(() {
+        _isLoading = false;
+        _hasError = true;
+      });
+    }
   }
 
   @override
   void dispose() {
-    _videoPlayerController.dispose();
+    _controller?.dispose(); // Certifique-se de que o controlador seja descartado corretamente
     super.dispose();
-  }
-
-  Future<void> _initVideoPlayer() async {
-    _videoPlayerController = VideoPlayerController.file(File(widget.filePath));
-    await _videoPlayerController.initialize();
-    await _videoPlayerController.setLooping(true);
-    await _videoPlayerController.play();
-    setState(() {});
-  }
-
-  Future<void> _convertToFrames() async {
-    setState(() => _isProcessing = true);
-
-    var result = await EditVideoPage.convertVideoToFrame(widget.filePath);
-    setState(() => _isProcessing = false);
-
-    if (result) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Video converted to frames successfully')),
-      );
-
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => FramesGalleryPage(framesDirPath: framesDirPath)
-        ),
-      );
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to convert video to frames')),
-      );
-    }
-  }
-
-  Future<void> _convertFramesToVideo() async {
-    setState(() => _isProcessing = true);
-
-    var tokens = widget.filePath.split('/');
-    var path = tokens.getRange(0, tokens.length - 1).join('/');
-    var fileName = tokens[tokens.length - 1].split('.')[0];
-    String dir = '$path/$fileName';
-    String outputVideoPath = '$path/${fileName}_rebuilt.mp4';
-
-    var result = await EditVideoPage.convertFrameToVideo(dir, outputVideoPath);
-    setState(() => _isProcessing = false);
-
-    if (result) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Frames converted to video successfully')),
-      );
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to convert frames to video')),
-      );
-    }
-  }
-
-  Future<void> _removeAudio() async {
-    setState(() => _isProcessing = true);
-
-    var tokens = widget.filePath.split('/');
-    var path = tokens.getRange(0, tokens.length - 1).join('/');
-    var fileName = tokens[tokens.length - 1].split('.')[0];
-    String dir = '$path/$fileName';
-
-    await EditVideoPage.removeAudioFromVideo(widget.filePath, dir);
-    await EditVideoPage.convertAudioToMp3('$dir/audio.aac', dir);
-
-    setState(() => _isProcessing = false);
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Audio extracted as .aac')),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Video Preview'),
-        elevation: 0,
-        backgroundColor: Theme.of(context).appBarTheme.backgroundColor,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.photo_library),
-            onPressed: _isProcessing ? null : _convertToFrames,
-            tooltip: 'Convert to Frames',
-          ),
-          IconButton(
-            icon: const Icon(Icons.volume_up_outlined),
-            onPressed: _isProcessing ? null : _removeAudio,
-            tooltip: 'Remove Audio',
-          ),
-          IconButton(
-            icon: const Icon(Icons.video_camera_back),
-            onPressed: _isProcessing ? null : _convertFramesToVideo,
-            tooltip: 'Convert Frames to Video',
-          ),
-        ],
+        title: const Text('Video Player'),
       ),
-      extendBodyBehindAppBar: true,
-      body: _videoPlayerController.value.isInitialized
-          ? Stack(
-        children: [
-          VideoPlayer(_videoPlayerController),
-          if (_isProcessing)
-            const Center(
-              child: CircularProgressIndicator(),
-            ),
-        ],
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : _hasError
+          ? Center(child: const Text('Failed to load video'))
+          : _controller != null && _controller!.value.isInitialized
+          ? AspectRatio(
+        aspectRatio: _controller!.value.aspectRatio,
+        child: VideoPlayer(_controller!),
       )
-          : const Center(child: CircularProgressIndicator()),
+          : const Text('Failed to initialize video controller.'),
+      floatingActionButton: _controller != null && _controller!.value.isInitialized
+          ? FloatingActionButton(
+        onPressed: () {
+          setState(() {
+            if (_controller!.value.isPlaying) {
+              _controller!.pause();
+            } else {
+              _controller!.play();
+            }
+          });
+        },
+        child: Icon(
+          _controller!.value.isPlaying ? Icons.pause : Icons.play_arrow,
+        ),
+      )
+          : null,
     );
   }
 }

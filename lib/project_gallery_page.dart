@@ -1,21 +1,59 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_video_app/videos_gallery_page.dart';
 import 'dart:io';
+import 'project_details_page.dart';
 
-import 'frames_gallery_page.dart';
-
-class ProjectGalleryPage extends StatelessWidget {
+class ProjectGalleryPage extends StatefulWidget {
   final Directory baseDir;
 
-  const ProjectGalleryPage({super.key, required this.baseDir});
+  const ProjectGalleryPage({Key? key, required this.baseDir}) : super(key: key);
+
+  @override
+  _ProjectGalleryPageState createState() => _ProjectGalleryPageState();
+}
+
+class _ProjectGalleryPageState extends State<ProjectGalleryPage> {
+  late List<Directory> projects;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProjects();
+  }
+
+  void _loadProjects() {
+    setState(() {
+      // Recarrega a lista de projetos a partir do diretório base
+      projects = widget.baseDir
+          .listSync()
+          .whereType<Directory>()
+          .toList();
+    });
+  }
+
+  Future<void> _deleteProject(Directory projectDir) async {
+    try {
+      if (await projectDir.exists()) {
+        await projectDir.delete(recursive: true);
+        _loadProjects(); // Atualiza a lista de projetos
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error deleting project: $e')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final projects = baseDir.listSync().whereType<Directory>().toList();
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Project Gallery'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadProjects, // Recarrega a lista de projetos
+          ),
+        ],
       ),
       body: projects.isEmpty
           ? const Center(child: Text('No projects found.'))
@@ -29,66 +67,25 @@ class ProjectGalleryPage extends StatelessWidget {
           return Card(
             child: ListTile(
               title: Text('Project ${projectDir.path.split('/').last}'),
-              subtitle: const Text('Contains video and frames'),
+              subtitle: Text('Contains video and frames'),
               onTap: () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (_) => ProjectDetailsPage(
                       videoPath: videoFile.path,
-                      framesDirPath: framesDir.existsSync() ? framesDir.path : null,
+                      framesDirPath: framesDir.existsSync() ? framesDir.path : null, projectPath: '',
                     ),
                   ),
-                );
+                ).then((_) => _loadProjects()); // Recarrega ao voltar
               },
+              trailing: IconButton(
+                icon: const Icon(Icons.delete),
+                onPressed: () => _deleteProject(projectDir),
+              ),
             ),
           );
         },
-      ),
-    );
-  }
-}
-
-class ProjectDetailsPage extends StatelessWidget {
-  final String videoPath;
-  final String? framesDirPath;
-
-  const ProjectDetailsPage({super.key, required this.videoPath, this.framesDirPath});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Project Details'),
-      ),
-      body: Column(
-        children: [
-          ListTile(
-            leading: const Icon(Icons.video_library),
-            title: const Text('Watch Video'),
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => VideoPlayerPage(videoPath: videoPath),
-                ),
-              );
-            },
-          ),
-          if (framesDirPath != null)
-            ListTile(
-              leading: const Icon(Icons.photo_library),
-              title: const Text('View Frames'),
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => FramesGalleryPage(framesDirPath: framesDirPath!),
-                  ),
-                );
-              },
-            ),
-        ],
       ),
     );
   }
